@@ -22,37 +22,32 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#define __MALLOC malloc
-#define __FREE   free
-#define __ASSERT assert
-#define PCONV(x) (void *)((uintptr_t)(x))
-
 typedef struct r_rbtree_node {
 	struct r_rbtree_node *link[2];
 	struct r_rbtree_node *parent;
 	uint32_t red;
 	void *data;
-} RRBTreeNode;
+} RRBNode;
 
-typedef ptrdiff_t (*cmp_func_t) (void *, void *);
-typedef void (*free_func_t) (void *);
+typedef int (*RRBComparator) (void *incoming, void *in, void *user);
+typedef void (*RRBFree) (void *data);
 
 typedef struct r_rbtree_t {
-	RRBTreeNode *root;
+	RRBNode *root;
 	size_t size;
-	cmp_func_t cmp;
-	free_func_t free;
+	RRBFree free;
 } RRBTree;
 
-extern void *rb_not_found;
-
-struct RRBTree *rb_alloc (cmp_func_t, free_func_t);
-void rb_free (RRBTree *);
-void rb_clear (struct RRBTree **);
-size_t rb_size (const struct RRBTree *);
-void *rb_get_unsafe (const struct RRBTree *, void *);
-int rb_find (const struct RRBTree *, void *data);
-bool rb_insert (struct RRBTree *, void *data);
-bool rb_remove (struct RRBTree *, void *);
+R_API RBTree *r_rbtree_new(RRBFree freefn);
+R_API void r_rbtree_clear(RRBTree *tree);
+R_API void r_rbtree_free(RRBTree *tree);
+R_API RRBNode *r_rbtree_find_node(RRBTree *tree, void *data, RRBComparator cmp, void *user);
+R_API void *r_rbtree_find(RRBTree *tree, void *data, RRBComparator cmp, void *user);
+R_API bool r_rbtree_insert(RRBTree *tree, void *data, RRBComparator cmp, void *user);
+R_API bool r_rbtree_delete(RRBTree *tree, void *data, RRBComparator cmp, void *user);
+R_API RRBNode *r_rbtree_first_node(RRBTree *tree);
+R_API RRBNode *r_rbtree_last_node(RRBTree *tree);
+R_API RRBNode *r_rbnode_next(RRBNode *node);
+R_API RRBNode *r_rbnode_prev(RRBNode *node);
 
 #endif /* RBTREE_H */

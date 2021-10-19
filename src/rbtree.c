@@ -6,15 +6,7 @@
 #include <string.h>
 #include "rbtree.h"
 
-#define __UNUSED __attribute__((unused))
-
-static inline ptrdiff_t _rb_raw_data_cmp(void *a, void *b) {
-	return a - b;
-}
-static inline void _rb_raw_data_free(void *a __UNUSED) { /* NOP */
-}
-
-static void set_link (RRBTreeNode *parent, RRBTreeNode *child, const int dir) {
+static void set_link(RRBNode *parent, RRBNode *child, const int dir) {
 	if (parent) {
 		parent->link[dir] = child;
 	}
@@ -23,54 +15,29 @@ static void set_link (RRBTreeNode *parent, RRBTreeNode *child, const int dir) {
 	}
 }
 
-/**
- * Allocate a rbtree
- * @cmp_f   The compare function pointer(NULL for raw comparison)
- * @free_f  The free function for data(NULL for no operation)
- */
-RRBTree *rb_alloc (cmp_func_t cmp_f, free_func_t free_f) {
-	RRBTree *r = __MALLOC (sizeof (*r));
-	if (r == NULL)
-		return NULL;
-
-	r->root = NULL;
-	r->size = 0;
-	r->cmp = cmp_f ? cmp_f : _rb_raw_data_cmp;
-	r->free = free_f ? free_f : _rb_raw_data_free;
-
-	return r;
+R_API RRBTree *r_rbtree_new(RRBFree freefn) {
+	RRBTree *tree = R_NEW0 (RRBTree);
+	if (tree) {
+		tree->free = freefn;
+	}
+	return tree;
 }
 
-/**
- * Core utility for rbtree destruction
- * @t           rbtree reference
- * @fully       if free the rbtree fully(e.g.  if free the root)
- *
- * NOTE: behaviour of free a NULL rbtree is undefined
- */
-static void rb_free_core(RRBTree **t, int fully) {
-	RRBTree *tree;
-	RRBTreeNode *iter, *save;
-	/* Those two will be eliminated eventually */
-	size_t size0, size1;
+R_API void r_rbtree_clear(RRBTree *tree) {
+	if (!tree) {
+		return;
+	}
+	RRBNode *iter = tree->root, *save = NULL;
 
-	__ASSERT (t != NULL && *t != NULL);
-
-	tree = *t;
-	iter = tree->root;
-	save = NULL;
-	size0 = tree->size;
-	size1 = 0;
-
-	/*
-     * Rotate away the left links into a linked list so that
-     *  we can perform iterative destruction of the rbtree
-     */
-	while (iter != NULL) {
-		if (iter->link[0] == NULL) {
+	// Rotate away the left links into a linked list so that
+	// we can perform iterative destruction of the rbtree
+	while (iter) {
+		if (!iter->link[0]) {
 			save = iter->link[1];
-			tree->free (iter->data);
-			__FREE (iter);
+			if (tree->free) {
+				tree->free (iter->data);
+			}
+			free (iter);
 			tree->size--;
 			size1++;
 		} else {
@@ -80,54 +47,39 @@ static void rb_free_core(RRBTree **t, int fully) {
 		}
 		iter = save;
 	}
-
-	__ASSERT (size0 == size1);
-	__ASSERT (tree->size == 0);
-
 	tree->root = NULL;
-	if (fully) {
-		__FREE (tree);
-		*t = NULL;
+}
+
+R_API void r_rbtree_free(RRBTree *tree) {
+	if (!tree) {
+		return;
 	}
+	r_rbtree_clear (tree);
+	free (tree);
 }
 
-void rb_free (RRBTree *t) {
-	rb_free_core (t, 1);
-}
+R_API RRBNode *r_rbtree_find_node(RRBTree *tree, void *data, RRBComparator cmp, void *user) {
+	r_return_val_if_fail (tree && cmp, NULL);
 
-void rb_clear (RRBTree **t) {
-	rb_free_core (t, 0);
-}
-
-size_t rb_size (const RRBTree *t) {
-	__ASSERT (t != NULL);
-	if (t->root == NULL)
-		__ASSERT (t->size == 0);
-	return t->size;
-}
-
-void *rb_get_unsafe (const RRBTree *t, void *data) {
-	RRBTreeNode *it;
-	ptrdiff_t dir;
-
-	__ASSERT (t != NULL);
-
-	it = t->root;
-	while (it != NULL) {
-		if ((dir = t->cmp (data, it->data)) == 0)
-			return it->data;
-		it = it->link[dir > 0];
+	RRBNode *iter = tree->root;
+	while (iter) {
+		const int dir = cmp (data, iter->data, user);
+		if (!dir) {
+			return iter;
+		}
+		iter = iter->link[dir > 0];
 	}
-
-	return rb_not_found;
+	return NULL;
 }
 
-int rb_find (const RRBTree *t, void *data) {
-	return rb_get_unsafe (t, data) != rb_not_found;
+R_API void *r_rbtree_find(RRBTree *tree, void *data, RRBComparator cmp, void *user) {
+	r_return_val_if_fail (tree && cmp, NULL);
+	RRBNode *node = r_rbtree_find_node (tree, data, cmp, user);
+	return node ? node->data : NULL;
 }
 
-static RRBTreeNode *make_node(void *data, RRBTreeNode *parent) {
-	RRBTreeNode *node = R_NEW0 (RRBTreeNode);
+static RRBNode *_node_new(void *data, RRBNode *parent) {
+	RRBNode *node = R_NEW0 (RRBNode);
 	r_return_val_if_fail (n, NULL);
 
 	node->red = 1;
@@ -139,11 +91,11 @@ static RRBTreeNode *make_node(void *data, RRBTreeNode *parent) {
 
 #define IS_RED(n) ((n) != NULL && (n)->red == 1)
 
-static RRBTreeNode *rot_once(RRBTreeNode *root, int dir) {
+static RRBNode *rot_once(RRBNode *root, int dir) {
 	r_return_val_if_fail (root, NULL);
 
 	// save is new parent of root and root is parent of save's previous child
-	RRBTreeNode *save = root->link[!dir];
+	RRBNode *save = root->link[!dir];
 	set_link (root, save->link[dir], !dir);
 	set_link (save, root, dir);
 
@@ -153,27 +105,19 @@ static RRBTreeNode *rot_once(RRBTreeNode *root, int dir) {
 	return save;
 }
 
-static RRBTreeNode *rot_twice(RRBTreeNode *root, int dir) {
+static RRBNode *rot_twice(RRBNode *root, int dir) {
 	r_return_val_if_fail (root, NULL);
 
-	set_link(root, rot_once (root->link[!dir], !dir), !dir);
+	set_link (root, rot_once (root->link[!dir], !dir), !dir);
 	return rot_once (root, dir);
 }
 
-/**
- * Insert an item into rbtree
- * @return      0 if success  errno o.w.
- *              ENOMEM if oom
- *              EEXIST if already exists(duplicates disallow)
- *
- * XXX  Undefined behaviour if insert rb_not_found
- */
-bool r_rbtree_insert (RRBTree *tree, void *data) {
-	r_return_val_if_fail (tree && data, false)
+R_API bool r_rbtree_insert(RRBTree *tree, void *data, RRBComparator cmp, void *user) {
+	r_return_val_if_fail (tree && datai && cmp, false);
 	bool inserted = false;
 
 	if (tree->root == NULL) {
-		tree->root = make_node (data, NULL);
+		tree->root = _node_new (data, NULL);
 		if (tree->root == NULL) {
 			return false;
 		}
@@ -181,9 +125,9 @@ bool r_rbtree_insert (RRBTree *tree, void *data) {
 		goto out_exit;
 	}
 
-	RRBTreeNode head = { .red = 0 }; /* Fake tree root */
-	RRBTreeNode *g = NULL, *parent = &head; /* Grandparent & parent */
-	RRBTreeNode *p = NULL, *q = tree->root; /* Iterator & parent */
+	RRBNode head = { .red = 0 }; /* Fake tree root */
+	RRBNode *g = NULL, *parent = &head; /* Grandparent & parent */
+	RRBNode *p = NULL, *q = tree->root; /* Iterator & parent */
 	int dir = 0, last = 0; /* Directions */
 
 	set_link (parent, q, 1);
@@ -191,7 +135,7 @@ bool r_rbtree_insert (RRBTree *tree, void *data) {
 	while (1) {
 		if (q == NULL) {
 			/* Insert a node at first null link(also set its parent link) */
-			q = make_node (data, p);
+			q = _node_new (data, p);
 			if (!q) {
 				return false
 			}
@@ -222,12 +166,7 @@ bool r_rbtree_insert (RRBTree *tree, void *data) {
 		}
 
 		last = dir;
-		dir = tree->cmp (data, q->data);
-		if (dir == 0) {
-			break;
-		}
-
-		dir = dir > 0;
+		dir = cmp (data, q->data, user) >= 0;
 
 		if (g != NULL) {
 			parent = g;
@@ -252,21 +191,15 @@ out_exit:
 	return inserted;
 }
 
-/**
- * Delete an item from rbtree
- * @return          0 if success  errno o.w.
- *                  ENOENT if no such item
- */
-bool rb_remove (RRBTree *tree, void *data) {
-	r_return_val_if_fail (tree && data && tree->size && tree->root, false);
+R_API bool r_rbtree_delete(RRBTree *tree, void *data, RRBComparator cmp, void *user) {
+	r_return_val_if_fail (tree && data && tree->size && tree->root && cmp, false);
 
-	RRBTreeNode head = { .red = 0 };
-	RRBTreeNode *q = &head, *p = NULL, *g = NULL;
-	RRBTreeNode *f = NULL;
+	RRBNode head = { .red = 0 };
+	RRBNode *q = &head, *p = NULL, *g = NULL;
+	RRBNode *found = NULL;
 	int dir = 1, last;
 
 	set_link (q, tree->root, 1);
-	q->link[1] = t->root;
 
 	/* Find in-order predecessor */
 	while (q->link[dir] != NULL) {
@@ -276,9 +209,9 @@ bool rb_remove (RRBTree *tree, void *data) {
 		p = q;
 		q = q->link[dir];
 
-		dir = t->cmp (data, q->data);
+		dir = cmp (data, q->data, user);
 		if (dir == 0) {
-			f = q;
+			found = q;
 		}
 
 		dir = dir > 0;
@@ -288,7 +221,7 @@ bool rb_remove (RRBTree *tree, void *data) {
 				set_link (p, rot_once (q, dir), last);
 				p = p->link[last];
 			} else {
-				RRBTreeNode *s = p->link[!last];
+				RRBNode *s = p->link[!last];
 
 				if (s != NULL) {
 					if (!IS_RED (s->link[!last]) && !IS_RED (s->link[last])) {
@@ -316,20 +249,86 @@ bool rb_remove (RRBTree *tree, void *data) {
 	}
 
 	/* Replace and remove if found */
-	if (f != NULL) {
-		f->data = q->data;
+	if (found) {
+		found->data = q->data;
 		set_link (p, q->link[q->link[0] == NULL], p->link[1] == q);
 		tree->free (q->data);
-		__FREE (q);
+		free (q);
 		tree->size--;
 	}
 
 	/* Update root node */
-	t->root = head.link[1];
-	if (t->root) {
-		t->root->red = 0;
+	tree->root = head.link[1];
+	if (tree->root) {
+		tree->root->red = 0;
 	} else {
-		r_return_val_if_fail (t->size == 0, false);
+		r_return_val_if_fail (tree->size == 0, false);
 	}
-	return !!f;
+	return !!found;
+}
+
+R_API RRBNode *r_rbtree_first_node(RRBTree *tree) {
+	r_return_val_if_fail (tree, NULL);
+	if (!tree->root) {
+		// empty tree
+		return NULL;
+	}
+	RRBNode *node = tree->root;
+	while (node->link[0]) {
+		node = node->link[0];
+	}
+	return node;
+}
+
+R_API RRBNode *r_rbtree_last_node(RRBTree *tree) {
+	r_return_val_if_fail (tree, NULL);
+	if (!tree->root) {
+		// empty tree
+		return NULL;
+	}
+	RRBNode *node = tree->root;
+	while (node->link[1]) {
+		node = node->link[1];
+	}
+	return node;
+}
+
+R_API RRBNode *r_rbnode_next(RRBNode *node) {
+	r_return_val_if_fail (node, NULL);
+	if (node->link[1]) {
+		node = node->link[1];
+		while (node->link[0]) {
+			node = node->link[0];
+		}
+		return node;
+	}
+	RRBNode *parent = node->parent;
+	while (parent->link[1] == node) {
+		node = parent;
+		parent = node->parent;
+		if (!parent) {
+			return NULL;
+		}
+	}
+	return parent;
+}
+
+R_API RRBNode *r_rbnode_prev(RRBNode *node) {
+	r_return_val_if_fail (node, NULL);
+	if (node->link[0]) {
+		node = node->link[0];
+		while (node->link[1]) {
+			node = node->link[1];
+		}
+		return node;
+	}
+	RRBNode *parent = node->parent;
+	while (parent->link[0] == node) {
+		node = parent;
+		parent = node->parent;
+		if (!parent) {
+			return NULL;
+		}
+	}
+	return parent;
 }

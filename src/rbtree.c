@@ -6,7 +6,7 @@
 #include <string.h>
 #include "rbtree.h"
 
-static void set_link(RRBNode *parent, RRBNode *child, const int dir) {
+static void _set_link(RRBNode *parent, RRBNode *child, const int dir) {
 	if (parent) {
 		parent->link[dir] = child;
 	}
@@ -42,8 +42,8 @@ R_API void r_rbtree_clear(RRBTree *tree) {
 			size1++;
 		} else {
 			save = iter->link[0];
-			set_link (iter, save->link[1], 0);
-			set_link (save, iter, 1);
+			_set_link (iter, save->link[1], 0);
+			_set_link (save, iter, 1);
 		}
 		iter = save;
 	}
@@ -91,13 +91,13 @@ static RRBNode *_node_new(void *data, RRBNode *parent) {
 
 #define IS_RED(n) ((n) != NULL && (n)->red == 1)
 
-static RRBNode *rot_once(RRBNode *root, int dir) {
+static RRBNode *_rot_once(RRBNode *root, int dir) {
 	r_return_val_if_fail (root, NULL);
 
 	// save is new parent of root and root is parent of save's previous child
 	RRBNode *save = root->link[!dir];
-	set_link (root, save->link[dir], !dir);
-	set_link (save, root, dir);
+	_set_link (root, save->link[dir], !dir);
+	_set_link (save, root, dir);
 
 	root->red = 1;
 	save->red = 0;
@@ -105,11 +105,11 @@ static RRBNode *rot_once(RRBNode *root, int dir) {
 	return save;
 }
 
-static RRBNode *rot_twice(RRBNode *root, int dir) {
+static RRBNode *_rot_twice(RRBNode *root, int dir) {
 	r_return_val_if_fail (root, NULL);
 
-	set_link (root, rot_once (root->link[!dir], !dir), !dir);
-	return rot_once (root, dir);
+	_set_link (root, _rot_once (root->link[!dir], !dir), !dir);
+	return _rot_once (root, dir);
 }
 
 R_API bool r_rbtree_insert(RRBTree *tree, void *data, RRBComparator cmp, void *user) {
@@ -130,7 +130,7 @@ R_API bool r_rbtree_insert(RRBTree *tree, void *data, RRBComparator cmp, void *u
 	RRBNode *p = NULL, *q = tree->root; /* Iterator & parent */
 	int dir = 0, last = 0; /* Directions */
 
-	set_link (parent, q, 1);
+	_set_link (parent, q, 1);
 
 	while (1) {
 		if (q == NULL) {
@@ -155,9 +155,9 @@ R_API bool r_rbtree_insert(RRBTree *tree, void *data, RRBComparator cmp, void *u
 			}
 			int dir2 = parent->link[1] == g;
 			if (q == p->link[last]) {
-				set_link (parent, rot_once (g, !last), dir2);
+				_set_link (parent, _rot_once (g, !last), dir2);
 			} else {
-				set_link (parent, rot_twice (g, !last), dir2);
+				_set_link (parent, _rot_twice (g, !last), dir2);
 			}
 		}
 
@@ -199,7 +199,7 @@ R_API bool r_rbtree_delete(RRBTree *tree, void *data, RRBComparator cmp, void *u
 	RRBNode *found = NULL;
 	int dir = 1, last;
 
-	set_link (q, tree->root, 1);
+	_set_link (q, tree->root, 1);
 
 	/* Find in-order predecessor */
 	while (q->link[dir] != NULL) {
@@ -218,7 +218,7 @@ R_API bool r_rbtree_delete(RRBTree *tree, void *data, RRBComparator cmp, void *u
 
 		if (!IS_RED (q) && !IS_RED (q->link[dir])) {
 			if (IS_RED (q->link[!dir])) {
-				set_link (p, rot_once (q, dir), last);
+				_set_link (p, _rot_once (q, dir), last);
 				p = p->link[last];
 			} else {
 				RRBNode *s = p->link[!last];
@@ -233,9 +233,9 @@ R_API bool r_rbtree_delete(RRBTree *tree, void *data, RRBComparator cmp, void *u
 						int dir2 = g->link[1] == p;
 
 						if (IS_RED (s->link[last])) {
-							set_link (g, rot_twice (p, last), dir2);
+							_set_link (g, _rot_twice (p, last), dir2);
 						} else {
-							set_link (g, rot_once (p, last), dir2);
+							_set_link (g, _rot_once (p, last), dir2);
 						}
 
 						/* Ensure correct coloring */
@@ -251,7 +251,7 @@ R_API bool r_rbtree_delete(RRBTree *tree, void *data, RRBComparator cmp, void *u
 	/* Replace and remove if found */
 	if (found) {
 		found->data = q->data;
-		set_link (p, q->link[q->link[0] == NULL], p->link[1] == q);
+		_set_link (p, q->link[q->link[0] == NULL], p->link[1] == q);
 		tree->free (q->data);
 		free (q);
 		tree->size--;
